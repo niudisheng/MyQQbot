@@ -1,5 +1,8 @@
 import nonebot
+from dotenv import load_dotenv
 from nonebot.adapters.onebot.v11 import Adapter as ONEBOT_V11Adapter
+
+load_dotenv()
 
 nonebot.init()
 
