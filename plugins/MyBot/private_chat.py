@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-
 from nonebot import get_plugin_config, on_message
 from nonebot.adapters import Message
 from nonebot.adapters.onebot.v11 import Bot, MessageEvent, PrivateMessageEvent
@@ -12,8 +10,6 @@ from nonebot.params import EventMessage
 
 from .chat_service import chat_private
 from .config import Config
-
-logger = logging.getLogger(__name__)
 
 # 私聊优先于部分插件，block 避免同一条私聊被多个插件重复处理
 private_ai = on_message(priority=40, block=True)
