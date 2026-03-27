@@ -7,10 +7,11 @@ from typing import Any
 import anthropic
 from dotenv import load_dotenv
 
-# 从项目根目录加载 .env（与从哪一级目录执行 python 无关）
+# 从项目根目录加载环境变量（与从哪一级目录执行 python 无关）
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _PLUGIN_DIR = Path(__file__).resolve().parent
 load_dotenv(_PROJECT_ROOT / ".env")
+load_dotenv(_PROJECT_ROOT / ".env.prod", override=True)
 
 _DEFAULT_CHARACTER_CARD = (
     _PLUGIN_DIR / "data" / "character_cards" / "tendou_kei.md"
@@ -28,8 +29,8 @@ def get_client() -> anthropic.Anthropic:
     if _client is None:
         if not _api_key:
             raise RuntimeError(
-                "未读取到 ANTHROPIC_API_KEY。请在项目根目录的 .env 中设置，"
-                "或配置系统用户环境变量后重开终端。"
+                "未读取到 ANTHROPIC_API_KEY。请在项目根目录的 .env 或 .env.prod 中设置，"
+                "或配置系统环境变量后重启进程。"
             )
         _client = anthropic.Anthropic(api_key=_api_key, base_url=_base_url)
     return _client

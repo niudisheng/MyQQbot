@@ -1,8 +1,12 @@
+from pathlib import Path
+
 import nonebot
 from dotenv import load_dotenv
 from nonebot.adapters.onebot.v11 import Adapter as ONEBOT_V11Adapter
 
-load_dotenv()
+_ROOT = Path(__file__).resolve().parent
+load_dotenv(_ROOT / ".env")
+load_dotenv(_ROOT / ".env.prod", override=True)
 
 nonebot.init()
 
