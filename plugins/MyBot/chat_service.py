@@ -6,8 +6,6 @@ import asyncio
 from collections import defaultdict
 from typing import TYPE_CHECKING
 
-from nonebot import logger
-
 if TYPE_CHECKING:
     from .config import Config
 
@@ -50,7 +48,6 @@ async def chat_private(
     try:
         reply = await asyncio.to_thread(_call)
     except Exception:
-        logger.exception("私聊 AI 调用失败 user_id={}", user_id)
         history.pop()
         raise
 

@@ -20,3 +20,7 @@ class Config(BaseModel):
         le=8192,
         description="单次回复 max_tokens",
     )
+    mybot_ai_expose_error_detail: bool = Field(
+        default=False,
+        description="为 True 时私聊报错会附带异常类型与简要信息，便于线上排查（排查完请改回 False）",
+    )
