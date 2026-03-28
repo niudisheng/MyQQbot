@@ -20,6 +20,12 @@ class Config(BaseModel):
         le=8192,
         description="单次回复 max_tokens",
     )
+    mybot_ai_max_chars_per_message: int = Field(
+        default=1500,
+        ge=100,
+        le=4500,
+        description="私聊单条消息最大字符数；超出会先按空行分段，再对超长段硬切",
+    )
     mybot_ai_expose_error_detail: bool = Field(
         default=False,
         description="为 True 时私聊报错会附带异常类型与简要信息，便于线上排查（排查完请改回 False）",

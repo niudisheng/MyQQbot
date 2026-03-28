@@ -13,6 +13,7 @@ from nonebot.params import EventMessage
 
 from .chat_service import chat_private
 from .config import Config
+from .message_split import split_reply_for_send
 
 # 私聊优先于部分插件，block 避免同一条私聊被多个插件重复处理
 private_ai = on_message(priority=40, block=True)
@@ -36,12 +37,6 @@ def _format_ai_error_for_user(exc: BaseException, *, expose_detail: bool) -> str
         f"调试信息：{detail}\n"
         "排查后请关闭 MYBOT_AI_EXPOSE_ERROR_DETAIL。"
     )
-
-
-def _chunk_text(text: str, limit: int = 1500) -> list[str]:
-    if len(text) <= limit:
-        return [text] if text else []
-    return [text[i : i + limit] for i in range(0, len(text), limit)]
 
 
 @private_ai.handle()
@@ -73,9 +68,13 @@ async def _handle_private_ai(
         text = _format_ai_error_for_user(
             e, expose_detail=config.mybot_ai_expose_error_detail
         )
-        for part in _chunk_text(text):
+        for part in split_reply_for_send(
+            text, config.mybot_ai_max_chars_per_message
+        ):
             await bot.send_private_msg(user_id=user_id, message=part)
         return
 
-    for part in _chunk_text(reply):
+    for part in split_reply_for_send(
+        reply, config.mybot_ai_max_chars_per_message
+    ):
         await bot.send_private_msg(user_id=user_id, message=part)
