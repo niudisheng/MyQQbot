@@ -24,3 +24,16 @@ class Config(BaseModel):
         default=False,
         description="为 True 时私聊报错会附带异常类型与简要信息，便于线上排查（排查完请改回 False）",
     )
+
+    mybot_impression_interval: int = Field(
+        default=10,
+        ge=1,
+        le=100,
+        description="每隔多少条用户消息更新一次对用户的印象",
+    )
+    mybot_max_persistent_messages: int = Field(
+        default=200,
+        ge=20,
+        le=2000,
+        description="磁盘最多保存的消息条数（超出则裁剪最早的）",
+    )

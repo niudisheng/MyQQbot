@@ -88,25 +88,43 @@ def _messages_to_api_format(
     return out
 
 
+def _build_system_prompt(
+    base: str | None = None,
+    impression: str | None = None,
+) -> str:
+    """拼接角色卡 system prompt 与用户印象。"""
+    prompt = base if base is not None else load_system_prompt_from_card()
+    if impression:
+        prompt += (
+            "\n\n[关于当前对话对象的记忆与印象]\n"
+            "以下是你在过去与这位用户的交流中形成的印象，请自然地参考这些信息，"
+            "不要在回复中直接提及「印象」「记忆系统」等元概念。\n"
+            f"{impression}"
+        )
+    return prompt
+
+
 def chat_completion(
     messages: list[dict[str, str]],
     *,
     system: str | None = None,
+    impression: str | None = None,
     model: str | None = None,
     max_tokens: int = 2048,
 ) -> str:
     """
     同步调用对话接口，返回助手纯文本回复。
     messages: [{"role": "user"|"assistant", "content": "..."}, ...]
+    impression: 对当前用户的印象文本，会拼接到 system prompt 末尾。
     """
     client = get_client()
     use_model = (model or _default_model).strip()
-    sys = system if system is not None else load_system_prompt_from_card()
+    sys_prompt = _build_system_prompt(system, impression)
     api_messages = _messages_to_api_format(messages)
     resp = client.messages.create(
         model=use_model,
         max_tokens=max_tokens,
-        system=sys,
+        system=sys_prompt,
         messages=api_messages,
     )
     parts: list[str] = []
@@ -114,6 +132,56 @@ def chat_completion(
         if block.type == "text":
             parts.append(block.text)
     return "".join(parts).strip() or "……（没有生成有效回复）"
+
+
+_IMPRESSION_SYSTEM_PROMPT = """\
+你是一个对话分析助手。请根据以下对话记录，以天童 Kei 的第一人称视角，写出对这位用户（老师）的印象与记忆。
+
+要求：
+- 用天童 Kei 自己的口吻和心理活动来写，体现她的性格（冷静、微嘴硬、实际在意）。
+- 涵盖：这个人的性格特点、说话风格、兴趣话题、情绪倾向、生活习惯、和我之间的关系与互动模式。
+- 如果有「旧印象」，请在其基础上补充和修正，保留仍然准确的部分，更新不再符合的内容。
+- 保持在 200-400 字。
+- 只输出印象正文，不要加标题、分隔线或其他元信息。\
+"""
+
+
+def generate_impression(
+    recent_messages: list[dict[str, str]],
+    old_impression: str | None = None,
+    *,
+    model: str | None = None,
+) -> str:
+    """调用 AI 根据近期对话生成/更新用户印象，返回印象纯文本。"""
+    client = get_client()
+    use_model = (model or _default_model).strip()
+
+    user_content_parts: list[str] = []
+    if old_impression:
+        user_content_parts.append(f"[旧印象]\n{old_impression}\n")
+    user_content_parts.append("[近期对话记录]")
+    for msg in recent_messages:
+        role_label = "用户" if msg["role"] == "user" else "Kei"
+        user_content_parts.append(f"{role_label}: {msg['content']}")
+
+    resp = client.messages.create(
+        model=use_model,
+        max_tokens=1024,
+        system=_IMPRESSION_SYSTEM_PROMPT,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "\n".join(user_content_parts)}
+                ],
+            }
+        ],
+    )
+    parts: list[str] = []
+    for block in resp.content:
+        if block.type == "text":
+            parts.append(block.text)
+    return "".join(parts).strip()
 
 
 if __name__ == "__main__":
