@@ -100,6 +100,28 @@ def format_clock_for_display(value: datetime) -> str:
     return value.astimezone(display_timezone()).strftime("%H:%M")
 
 
+def display_timezone_iana_name() -> str:
+    """与 `ACTIVITY_CONTEXT_DISPLAY_TZ` 一致，用于上传 JSON 的 reference_timezone 字段。"""
+    raw = os.getenv("ACTIVITY_CONTEXT_DISPLAY_TZ", "Asia/Shanghai").strip()
+    return raw if raw else "Asia/Shanghai"
+
+
+def utc_iso_to_reference_local_iso(iso_str: str | None) -> str | None:
+    """将 UTC ISO 字符串转为「展示时区」下的 ISO8601（含偏移）。"""
+    dt = parse_iso(iso_str)
+    if dt is None:
+        return None
+    return dt.astimezone(display_timezone()).isoformat(timespec="seconds")
+
+
+def utc_iso_to_reference_local_clock(iso_str: str | None) -> str | None:
+    """将 UTC ISO 转为展示时区下的 `YYYY-MM-DD HH:mm`，便于云端 AI 按本地日理解。"""
+    dt = parse_iso(iso_str)
+    if dt is None:
+        return None
+    return dt.astimezone(display_timezone()).strftime("%Y-%m-%d %H:%M")
+
+
 def to_iso(value: datetime) -> str:
     return value.astimezone(UTC).isoformat(timespec="seconds")
 

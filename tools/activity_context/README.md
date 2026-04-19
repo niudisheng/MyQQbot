@@ -169,6 +169,8 @@ python -m tools.activity_context.cloud_sync --dry-run --pretty
 
 确认内容符合预期后，再配置云端地址做真实同步。
 
+上传 JSON 里会同时带 **UTC**（`start_at`/`end_at`）和 **本地参考时区**（默认北京时间，由环境变量 `ACTIVITY_CONTEXT_DISPLAY_TZ` 控制）：`reference_timezone`、`start_at_local_clock`/`end_at_local_clock`、`start_at_local_iso` 等；另有 `time_semantics` 说明字段含义。云端 AI 若问「几点、哪一天」，应优先读带 `local` 的字段。
+
 ## 怎么判断结果靠不靠谱
 
 查询结果里最重要的几个字段：

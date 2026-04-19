@@ -1,14 +1,15 @@
-# Activity Context 云端服务
+﻿# Activity Context 云端服务
 
 与本地 `tools/activity_context/cloud_sync.py` 配套：接收脱敏摘要并落库，同时提供**受 Token 保护**的对外 HTTP 拉取接口，把响应保存到本机 SQLite。
 
 ## 职责
 
 1. **POST `/api/v1/summaries`**  
-   与本地 `cloud_sync.py` 发送的 JSON 一致，幂等键为 `(X-Client-Id, summary_id)`，默认 `X-Client-Id` 为空即单机。
+   与本地 `cloud_sync.py` 发送的 JSON 一致，幂等键为 `(X-Client-Id, summary_id)`，默认 `X-Client-Id` 为空即单机。  
+   负载中除 `start_at`/`end_at`（UTC）外，还包含 `reference_timezone`、`start_at_local_clock`/`end_at_local_clock` 等字段，便于云端 AI 按**北京时间（或 `ACTIVITY_CONTEXT_DISPLAY_TZ`）**理解「哪一天、几点」，详见本地 `cloud_sync.build_public_payload`。
 
 2. **GET `/api/v1/summaries`**  
-   查询已入库摘要（供云端 AI 或其它服务消费）。
+   查询已入库摘要（供云端 AI 或其它服务消费）。每条 `items[]` 除扁平字段外，另有 **`payload`**：完整 JSON（含本地时间字段），避免遗漏新字段。
 
 3. **POST `/api/v1/fetch`**  
    服务端代你请求外部 URL（如公开 API、你自己的内网网关），结果写入 `external_fetch_logs`。

@@ -1,4 +1,4 @@
-"""把脱敏后的摘要同步到云端。"""
+﻿"""把脱敏后的摘要同步到云端。"""
 
 from __future__ import annotations
 
@@ -84,16 +84,51 @@ def sanitize_tag(tag: str) -> str:
     return cleaned[:64]
 
 
+def _enrich_missing_ranges_local(ranges: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """为 missing_ranges 每条补充 reference_timezone 下的 ISO 与易读时钟。"""
+    out: list[dict[str, Any]] = []
+    for m in ranges:
+        item = dict(m)
+        sa = m.get("start_at")
+        ea = m.get("end_at")
+        if sa:
+            s = str(sa)
+            item["start_at_local_iso"] = storage.utc_iso_to_reference_local_iso(s)
+            item["start_at_local_clock"] = storage.utc_iso_to_reference_local_clock(s)
+        if ea:
+            e = str(ea)
+            item["end_at_local_iso"] = storage.utc_iso_to_reference_local_iso(e)
+            item["end_at_local_clock"] = storage.utc_iso_to_reference_local_clock(e)
+        out.append(item)
+    return out
+
+
 def build_public_payload(row) -> dict[str, Any]:
     apps = storage.json_loads(row["apps_json"], default=[])
     tags = storage.json_loads(row["tags_json"], default=[])
     missing_ranges = storage.json_loads(row["missing_ranges_json"], default=[])
     project_hint = sanitize_text(row["project_hint"])
     task_summary = sanitize_text(row["inferred_task"])
+    ref_name = storage.display_timezone_iana_name()
+    start_utc = str(row["start_at"] or "")
+    end_utc = str(row["end_at"] or "")
     return {
         "summary_id": row["id"],
-        "start_at": row["start_at"],
-        "end_at": row["end_at"],
+        # 机器可读：存库为 UTC 的 ISO8601
+        "start_at": start_utc,
+        "end_at": end_utc,
+        "start_at_utc": start_utc,
+        "end_at_utc": end_utc,
+        "reference_timezone": ref_name,
+        "start_at_local_iso": storage.utc_iso_to_reference_local_iso(start_utc),
+        "end_at_local_iso": storage.utc_iso_to_reference_local_iso(end_utc),
+        "start_at_local_clock": storage.utc_iso_to_reference_local_clock(start_utc),
+        "end_at_local_clock": storage.utc_iso_to_reference_local_clock(end_utc),
+        "time_semantics": (
+            "start_at/end_at/start_at_utc/end_at_utc 为 UTC（ISO8601）。"
+            "start_at_local_iso/end_at_local_iso 与 *_local_clock 为 reference_timezone 时区，"
+            "云端 AI 解读「几点、哪一天」请优先用 *_local_clock 或 *_local_iso。"
+        ),
         "project_hint": project_hint,
         "task_summary": task_summary,
         "observed_apps": [sanitize_tag(str(app)) for app in apps if app],
@@ -101,6 +136,7 @@ def build_public_payload(row) -> dict[str, Any]:
         "data_status": row["data_status"],
         "confidence": row["confidence"],
         "missing_ranges": missing_ranges,
+        "missing_ranges_local": _enrich_missing_ranges_local(missing_ranges),
         "source_event_count": row["source_event_count"],
         "observed_facts": "主要应用：" + "、".join(
             sanitize_tag(str(app)) for app in apps[:3] if app

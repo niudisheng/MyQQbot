@@ -8,7 +8,7 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from . import config, db
 from .fetcher import fetch_url, try_decode_body
@@ -39,7 +39,9 @@ def verify_token(
 
 
 class SummaryIngest(BaseModel):
-    """与 cloud_sync.build_public_payload 输出字段一致。"""
+    """与 cloud_sync.build_public_payload 输出字段一致；含 UTC + reference_timezone 本地时间。"""
+
+    model_config = ConfigDict(extra="allow")
 
     summary_id: int = Field(..., ge=0)
     start_at: str
@@ -53,6 +55,16 @@ class SummaryIngest(BaseModel):
     missing_ranges: list[dict[str, Any]] = Field(default_factory=list)
     source_event_count: int = 0
     observed_facts: str | None = None
+    # 可选：本地客户端上传的时区语义（便于 OpenAPI 展示；extra=allow 也会保留其它键）
+    start_at_utc: str | None = None
+    end_at_utc: str | None = None
+    reference_timezone: str | None = None
+    start_at_local_iso: str | None = None
+    end_at_local_iso: str | None = None
+    start_at_local_clock: str | None = None
+    end_at_local_clock: str | None = None
+    time_semantics: str | None = None
+    missing_ranges_local: list[dict[str, Any]] | None = None
 
 
 _ALLOWED_METHODS = frozenset({"GET", "POST", "PUT", "DELETE", "HEAD", "PATCH"})
@@ -130,6 +142,10 @@ def create_app() -> FastAPI:
             rows = cur.fetchall()
         items = []
         for r in rows:
+            try:
+                full_payload = json.loads(r["payload_json"] or "{}")
+            except json.JSONDecodeError:
+                full_payload = {}
             items.append(
                 {
                     "id": r["id"],
@@ -147,6 +163,7 @@ def create_app() -> FastAPI:
                     "source_event_count": r["source_event_count"],
                     "observed_facts": r["observed_facts"],
                     "received_at": r["received_at"],
+                    "payload": full_payload,
                 }
             )
         return {"ok": True, "count": len(items), "items": items}
