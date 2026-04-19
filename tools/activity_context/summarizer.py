@@ -1,4 +1,4 @@
-"""将原始事件汇总为可读摘要。"""
+﻿"""将原始事件汇总为可读摘要。"""
 
 from __future__ import annotations
 
@@ -25,7 +25,7 @@ def _summary_minutes() -> int:
 
 
 def _window_label(value: datetime) -> str:
-    return value.astimezone(UTC).strftime("%H:%M")
+    return storage.format_clock_for_display(value)
 
 
 def _top_items(seconds_by_key: dict[str, float], *, limit: int = 3) -> list[tuple[str, float]]:

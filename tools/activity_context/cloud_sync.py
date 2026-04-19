@@ -6,10 +6,12 @@ import argparse
 import json
 import os
 import re
+import ssl
 import sys
 from pathlib import Path
 from typing import Any
 from urllib import request
+from urllib.error import HTTPError
 
 if __package__ in (None, ""):
     _ROOT = Path(__file__).resolve().parents[2]
@@ -18,6 +20,21 @@ if __package__ in (None, ""):
     from tools.activity_context import storage
 else:
     from . import storage
+
+
+def _load_project_env() -> None:
+    """与 bot.py 一致：从项目根目录加载 .env / .env.prod，否则命令行里读不到配置。"""
+    root = Path(__file__).resolve().parents[2]
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(root / ".env")
+        load_dotenv(root / ".env.prod", override=True)
+    except ImportError:
+        pass
+
+
+_load_project_env()
 
 _WINDOWS_PATH_RE = re.compile(r"[A-Za-z]:\\(?:[^\\/:*?\"<>|\r\n]+\\)*[^\\/:*?\"<>|\r\n]*")
 _UNIX_PATH_RE = re.compile(r"/(?:[^/\s]+/)*[^/\s]*")
@@ -35,6 +52,21 @@ def _sync_token() -> str:
 
 def _timeout_seconds() -> int:
     return int(os.getenv("ACTIVITY_CONTEXT_CLOUD_SYNC_TIMEOUT_SECONDS", "10"))
+
+
+def _ssl_verify_enabled() -> bool:
+    return os.getenv("ACTIVITY_CONTEXT_CLOUD_SYNC_SSL_VERIFY", "true").lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def _https_ssl_context() -> ssl.SSLContext:
+    if _ssl_verify_enabled():
+        return ssl.create_default_context()
+    return ssl._create_unverified_context()
 
 
 def sanitize_text(text: str | None) -> str | None:
@@ -86,9 +118,44 @@ def _post_json(payload: dict[str, Any]) -> None:
         headers["Authorization"] = f"Bearer {token}"
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     req = request.Request(url, data=body, headers=headers, method="POST")
-    with request.urlopen(req, timeout=_timeout_seconds()) as resp:
-        if resp.status >= 300:
-            raise RuntimeError(f"云端同步失败: HTTP {resp.status}")
+    open_kw: dict[str, Any] = {"timeout": _timeout_seconds()}
+    if url.lower().startswith("https:"):
+        open_kw["context"] = _https_ssl_context()
+    try:
+        with request.urlopen(req, **open_kw) as resp:
+            if resp.status >= 300:
+                raise RuntimeError(f"云端同步失败: HTTP {resp.status}")
+    except HTTPError as exc:
+        hint = ""
+        if exc.code == 404:
+            hint = (
+                " 提示：路径或端口不对。本仓库云端服务路由为 POST /api/v1/summaries；"
+                "若 uvicorn 监听在 8780，URL 须为 http://IP:8780/api/v1/summaries。"
+                "若只写了 http://IP/... 会走默认 80 端口，容易 404。"
+            )
+        elif exc.code in (401, 403):
+            hint = (
+                " 提示：检查 ACTIVITY_CONTEXT_CLOUD_SYNC_TOKEN 是否与云端 "
+                "ACTIVITY_CONTEXT_SERVER_TOKEN（或 ACTIVITY_CONTEXT_CLOUD_SYNC_TOKEN）一致。"
+            )
+        elif exc.code in (502, 503, 504):
+            hint = (
+                " 提示：多为「反代 → 上游」失败。请在服务器上确认："
+                "1) cloud_server 已运行且监听 ACTIVITY_CONTEXT_SERVER_PORT（默认 8780）；"
+                "2) 在服务器执行 curl -sS http://127.0.0.1:8780/health 应返回 JSON；"
+                "3) Nginx/Caddy 的 proxy_pass 应指向 http://127.0.0.1:8780，且防火墙放行。"
+            )
+        raise RuntimeError(f"{exc}{hint}") from exc
+    except OSError as exc:
+        err_text = str(exc).lower()
+        if "ssl" in err_text or "certificate" in err_text or "eof" in err_text:
+            raise RuntimeError(
+                f"{exc}\n"
+                "提示：若云端实际是明文 HTTP（例如 uvicorn 直接监听 8780 且无 TLS），"
+                "请把 ACTIVITY_CONTEXT_CLOUD_SYNC_URL 改为 http://IP:端口/api/v1/summaries；"
+                "若必须用自签证书，可临时设 ACTIVITY_CONTEXT_CLOUD_SYNC_SSL_VERIFY=false（仅建议内网调试）。"
+            ) from exc
+        raise
 
 
 def sync_pending(*, limit: int = 20, dry_run: bool = False) -> dict[str, Any]:

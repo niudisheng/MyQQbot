@@ -351,10 +351,14 @@ python -m tools.activity_context.cloud_sync --dry-run --pretty
   - 摘要时间片长度，默认 `15`
 - `ACTIVITY_CONTEXT_STALE_AFTER_MINUTES`
   - 超过多久未采集则视为 `stale`
+- `ACTIVITY_CONTEXT_DISPLAY_TZ`
+  - 摘要里「几点到几点」与时间片切分对齐的时区（IANA），默认 `Asia/Shanghai`；数据库里 `start_at`/`end_at` 仍为 UTC。Windows 若报错可 `pip install tzdata`。
 - `ACTIVITY_CONTEXT_CLOUD_SYNC_URL`
-  - 云端摘要接收地址
+  - 云端摘要接收地址；须与实际协议一致（直连 uvicorn 无 TLS 时用 `http://IP:端口/...`）
 - `ACTIVITY_CONTEXT_CLOUD_SYNC_TOKEN`
   - 云端同步鉴权 token
+- `ACTIVITY_CONTEXT_CLOUD_SYNC_SSL_VERIFY`
+  - HTTPS 时是否校验证书，默认 `true`；自签证书内网调试可设 `false`
 
 ## 隐私边界
 

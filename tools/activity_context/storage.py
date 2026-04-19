@@ -1,4 +1,4 @@
-"""Activity context 的本地存储与通用工具。"""
+﻿"""Activity context 的本地存储与通用工具。"""
 
 from __future__ import annotations
 
@@ -74,6 +74,30 @@ def configure_stdio() -> None:
 
 def utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def display_timezone() -> datetime.tzinfo:
+    """
+    摘要中面向用户的时钟（facts_text 里的 HH:MM）以及时间片取整所用的时区。
+    默认 Asia/Shanghai（北京时间）。存库仍为 UTC ISO，仅展示与分桶对齐按此时区。
+    """
+    raw = os.getenv("ACTIVITY_CONTEXT_DISPLAY_TZ", "Asia/Shanghai").strip()
+    if not raw or raw.upper() == "UTC":
+        return UTC
+    try:
+        from zoneinfo import ZoneInfo
+
+        return ZoneInfo(raw)
+    except Exception:
+        # Windows 未安装 tzdata 时 ZoneInfo 可能不可用，中国时区退回固定 UTC+8
+        if raw in ("Asia/Shanghai", "Asia/Chongqing", "Asia/Hong_Kong", "PRC"):
+            return datetime.timezone(timedelta(hours=8), name="CST")
+        return UTC
+
+
+def format_clock_for_display(value: datetime) -> str:
+    """将时刻格式化为显示时区下的 HH:MM（用于摘要文案）。"""
+    return value.astimezone(display_timezone()).strftime("%H:%M")
 
 
 def to_iso(value: datetime) -> str:
@@ -189,9 +213,14 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 
 def floor_time(value: datetime, *, minutes: int) -> datetime:
-    dt = value.astimezone(UTC).replace(second=0, microsecond=0)
-    minute = dt.minute - (dt.minute % minutes)
-    return dt.replace(minute=minute)
+    """
+    在显示时区内对齐到分钟网格，再转回 UTC，便于「每 15 分钟」与北京本地整点对齐。
+    """
+    tz = display_timezone()
+    local = value.astimezone(tz).replace(second=0, microsecond=0)
+    minute = local.minute - (local.minute % minutes)
+    floored_local = local.replace(minute=minute)
+    return floored_local.astimezone(UTC)
 
 
 def iter_windows(start: datetime, end: datetime, *, minutes: int) -> Iterable[tuple[datetime, datetime]]:

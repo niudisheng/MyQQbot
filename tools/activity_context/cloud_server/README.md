@@ -1,4 +1,4 @@
-﻿# Activity Context 云端服务
+# Activity Context 云端服务
 
 与本地 `tools/activity_context/cloud_sync.py` 配套：接收脱敏摘要并落库，同时提供**受 Token 保护**的对外 HTTP 拉取接口，把响应保存到本机 SQLite。
 
@@ -49,7 +49,9 @@ python -m tools.activity_context.cloud_server
 `.env` 中：
 
 ```env
-ACTIVITY_CONTEXT_CLOUD_SYNC_URL=https://你的域名/api/v1/summaries
+# 直连 uvicorn（默认端口 8780、无 TLS）时必须带端口，否则会打到 80 端口其它服务导致 404
+ACTIVITY_CONTEXT_CLOUD_SYNC_URL=http://你的服务器IP:8780/api/v1/summaries
+# 若前面有 Nginx 终止 HTTPS 并反代到 8780，再用 https://域名/api/v1/summaries
 ACTIVITY_CONTEXT_CLOUD_SYNC_TOKEN=与云端 ACTIVITY_CONTEXT_SERVER_TOKEN 相同
 ```
 
@@ -88,3 +90,57 @@ python -m tools.activity_context.cloud_sync --pretty
 
 - 生产环境务必使用 HTTPS 反代（Nginx / Caddy），并强密码 Token。
 - `/api/v1/fetch` 能访问公网任意 URL，仅应用 Token 保护；若部署在敏感网络，请结合防火墙或仅允许内网调用。
+
+## 排查：本地 `cloud_sync` 报 HTTP 502 / 503
+
+**含义：** 浏览器或 Nginx 能连上，但 **反代到 uvicorn 失败**（502），或 **上游暂时不可用**（503）。常见原因：**`cloud_server` 没在跑**、**监听地址/端口不对**、**Nginx `proxy_pass` 指错**。
+
+### 第一步：先确认上游本身可用（在 VPS 本机执行）
+
+```bash
+ss -tlnp | grep 8780
+curl -sS http://127.0.0.1:8780/health
+```
+
+- 若 `curl` 失败或没有监听：先启动服务（示例）：
+
+```bash
+export ACTIVITY_CONTEXT_SERVER_TOKEN=你的密钥
+cd /path/to/MyQQbot
+python -m tools.activity_context.cloud_server
+```
+
+或用 `screen` / `tmux` / `systemd` 常驻。
+
+### 第二步：区分是「反代问题」还是「上游问题」
+
+在 **你电脑** 上临时把 `.env` 里的地址改成 **直连 uvicorn**（绕过 Nginx）：
+
+```env
+ACTIVITY_CONTEXT_CLOUD_SYNC_URL=http://你的公网IP:8780/api/v1/summaries
+```
+
+再跑 `python -m tools.activity_context.cloud_sync --pretty`。
+
+- **直连 8780 成功、走域名/443 失败** → 问题在 Nginx/Caddy/证书/防火墙，继续看下一步。
+- **直连 8780 也失败** → 先解决监听与安全组（云厂商控制台放行 **入站 TCP 8780**，或只监听本机则仅允许 `127.0.0.1` 由 Nginx 访问）。
+
+### 第三步：Nginx 最小反代示例（HTTPS 终止在 Nginx，上游仍 HTTP）
+
+```nginx
+location /api/v1/ {
+    proxy_pass http://127.0.0.1:8780;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+注意：`proxy_pass` 必须是 **`http://127.0.0.1:8780`**（端口与 `ACTIVITY_CONTEXT_SERVER_PORT` 一致），不要写成带路径的错 upstream。
+
+### 其它
+
+- 云安全组：若只从外网访问 **443**，不必对外开放 8780，只要 **Nginx 与本机 8780 互通**即可（一般同机 `127.0.0.1` 无防火墙问题）。
+- 若仍 502/503：看 Nginx `error.log`（常见为 `Connection refused` = 上游未启动）。
