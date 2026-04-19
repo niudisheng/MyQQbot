@@ -23,6 +23,21 @@
 
 若你在 VPS 上部署配套接收端，见 [`cloud_server/README.md`](cloud_server/README.md)：接收与 `cloud_sync.py` 相同的 JSON、本地 SQLite 落库，并提供受 Token 保护的对外 HTTP 拉取（`/api/v1/fetch`）用于拉第三方数据并保存。
 
+## 一键定时守护（长期开机推荐）
+
+默认**每 30 分钟**自动执行一轮：**采集 → 摘要 → 上传**。间隔可在 `.env` 中设置 `ACTIVITY_CONTEXT_DAEMON_INTERVAL_SECONDS`（秒），或用命令行 `--interval`。
+
+```bash
+python -m tools.activity_context.daemon
+```
+
+Windows 可双击 [`start_activity_daemon.bat`](start_activity_daemon.bat)（要求仓库根目录存在 `.venv`；否则会提示改路径）。  
+若双击后出现 `锘緻echo` 或整行乱码，说明批处理被存成了 **UTF-8 带 BOM**；请用编辑器改为 **UTF-8 无 BOM** 保存，或在仓库根执行：  
+`python -c "p=r'tools/activity_context/start_activity_daemon.bat'; b=open(p,'rb').read(); open(p,'wb').write(b.lstrip(b'\xef\xbb\xbf'))"`。
+
+- 只跑一轮后退出（调试）：`python -m tools.activity_context.daemon --once`
+- 指定间隔（秒）：`python -m tools.activity_context.daemon --interval 900`
+
 ## 最简单的使用方式
 
 先确认你已经开着 `ActivityWatch`。

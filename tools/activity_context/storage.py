@@ -7,7 +7,7 @@ import os
 import re
 import sqlite3
 import sys
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -91,7 +91,7 @@ def display_timezone() -> datetime.tzinfo:
     except Exception:
         # Windows 未安装 tzdata 时 ZoneInfo 可能不可用，中国时区退回固定 UTC+8
         if raw in ("Asia/Shanghai", "Asia/Chongqing", "Asia/Hong_Kong", "PRC"):
-            return datetime.timezone(timedelta(hours=8), name="CST")
+            return timezone(timedelta(hours=8), name="CST")
         return UTC
 
 
