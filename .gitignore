@@ -1,4 +1,4 @@
-# Byte-compiled / optimized / DLL files
+﻿# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
@@ -210,3 +210,9 @@ __marimo__/
 # Bot runtime data (user conversations & impressions)
 plugins/MyBot/data/sessions/
 plugins/MyBot/data/impressions/
+
+# Activity context local data
+tools/activity_context/data/
+
+# Activity context cloud server local DB (deploy on VPS)
+tools/activity_context/cloud_server/data/
