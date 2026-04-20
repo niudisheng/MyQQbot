@@ -27,6 +27,7 @@
 
 ```bash
 python -m tools.activity_context.cloud_pull summaries --pretty
+python -m tools.activity_context.cloud_pull hourly --record-start "..." --record-end "..." --pretty
 python -m tools.activity_context.cloud_pull fetches --pretty
 ```
 
@@ -100,8 +101,26 @@ python -m tools.activity_context.context_api serve --host 127.0.0.1 --port 8765
 
 - `GET /health`
 - `GET /focus?minutes=15`
-- `GET /recent?hours=2&limit=10`
+- `GET /recent?hours=2&limit=10`（相对「当前时刻」，适合机器一直在线）
+- `GET /recent?record_start=...&record_end=...&limit=5000`（**按库里记录的时间区间**，不假设电脑一直开着）
 - `GET /project?name=MyQQbot&days=1&limit=10`
+- `GET /project?name=MyQQbot&record_start=...&record_end=...&limit=5000`
+
+### 按「记录时间」查某一天 / 某段区间（推荐）
+
+摘要行里的 `start_at` / `end_at` 是**活动发生时间**（UTC ISO）。要「某一天」或任意区间，请用 **`record_start` + `record_end`**，与当前时刻无关；`limit` 只是防止一次读太多的安全上限（例如一天约 96 个 15 分钟片，设 `5000` 足够）。
+
+本机 CLI 示例（把日期换成你的那一天，注意时区与库内一致，一般用 UTC 或你环境里的 ISO）：
+
+```bash
+python -m tools.activity_context.context_api recent --record-start "2026-04-19T00:00:00+00:00" --record-end "2026-04-19T23:59:59+00:00" --pretty
+```
+
+云端拉取（需云端服务已支持 `record_start` / `record_end` 查询参数）：
+
+```bash
+python -m tools.activity_context.cloud_pull summaries --record-start "2026-04-19T00:00:00+00:00" --record-end "2026-04-19T23:59:59+00:00" --pretty
+```
 
 ## 每个命令是干什么的
 

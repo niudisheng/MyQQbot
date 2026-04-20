@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+import sys
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
@@ -13,7 +16,79 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import config, db
 from .fetcher import fetch_url, try_decode_body
 
+_ROOT = Path(__file__).resolve().parents[3]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+from tools.activity_context.readable_timeline import build_hourly_timeline
+
 security = HTTPBearer(auto_error=False)
+
+
+def _fetch_received_rows(
+    conn: sqlite3.Connection,
+    *,
+    limit: int,
+    project: str | None,
+    since: str | None,
+    record_start: str | None,
+    record_end: str | None,
+) -> list[sqlite3.Row]:
+    rs = (record_start or "").strip() or None
+    re = (record_end or "").strip() or None
+    if rs and re:
+        if project:
+            cur = conn.execute(
+                """
+                SELECT * FROM received_summaries
+                WHERE end_at >= ?
+                  AND start_at <= ?
+                  AND project_hint LIKE ?
+                ORDER BY start_at ASC
+                LIMIT ?
+                """,
+                (rs, re, f"%{project}%", limit),
+            )
+        else:
+            cur = conn.execute(
+                """
+                SELECT * FROM received_summaries
+                WHERE end_at >= ?
+                  AND start_at <= ?
+                ORDER BY start_at ASC
+                LIMIT ?
+                """,
+                (rs, re, limit),
+            )
+    elif project:
+        cur = conn.execute(
+            """
+            SELECT * FROM received_summaries
+            WHERE project_hint LIKE ?
+            ORDER BY end_at DESC
+            LIMIT ?
+            """,
+            (f"%{project}%", limit),
+        )
+    elif since:
+        cur = conn.execute(
+            """
+            SELECT * FROM received_summaries
+            WHERE end_at >= ?
+            ORDER BY end_at DESC
+            LIMIT ?
+            """,
+            (since, limit),
+        )
+    else:
+        cur = conn.execute(
+            """
+            SELECT * FROM received_summaries
+            ORDER BY end_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+    return cur.fetchall()
 
 
 def verify_token(
@@ -105,41 +180,34 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/summaries")
     def list_summaries(
         _: Annotated[str, Depends(verify_token)],
-        limit: int = Query(50, ge=1, le=500),
+        limit: int = Query(5000, ge=1, le=20000),
         project: str | None = None,
         since: str | None = None,
+        record_start: str | None = None,
+        record_end: str | None = None,
     ) -> dict[str, Any]:
+        """
+        筛选说明：
+        - 若同时提供 record_start、record_end：按**记录时间区间**与摘要区间重叠筛选（不依赖服务器「当前时刻」）。
+        - 否则 since：end_at >= since（兼容旧用法）。
+        - 否则仅 project / 全表；limit 仅为安全上限。
+        """
+        rs = (record_start or "").strip() or None
+        re = (record_end or "").strip() or None
+        if (rs and not re) or (re and not rs):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="record_start and record_end must be provided together",
+            )
         with db.connect() as conn:
-            if project:
-                cur = conn.execute(
-                    """
-                    SELECT * FROM received_summaries
-                    WHERE project_hint LIKE ?
-                    ORDER BY end_at DESC
-                    LIMIT ?
-                    """,
-                    (f"%{project}%", limit),
-                )
-            elif since:
-                cur = conn.execute(
-                    """
-                    SELECT * FROM received_summaries
-                    WHERE end_at >= ?
-                    ORDER BY end_at DESC
-                    LIMIT ?
-                    """,
-                    (since, limit),
-                )
-            else:
-                cur = conn.execute(
-                    """
-                    SELECT * FROM received_summaries
-                    ORDER BY end_at DESC
-                    LIMIT ?
-                    """,
-                    (limit,),
-                )
-            rows = cur.fetchall()
+            rows = _fetch_received_rows(
+                conn,
+                limit=limit,
+                project=project,
+                since=since,
+                record_start=rs,
+                record_end=re,
+            )
         items = []
         for r in rows:
             try:
@@ -166,7 +234,52 @@ def create_app() -> FastAPI:
                     "payload": full_payload,
                 }
             )
-        return {"ok": True, "count": len(items), "items": items}
+        mode = "record_range" if rs and re else ("since" if since else ("project" if project else "latest"))
+        return {"ok": True, "filter_mode": mode, "count": len(items), "items": items}
+
+    @app.get("/api/v1/timeline/hourly")
+    def hourly_timeline(
+        _: Annotated[str, Depends(verify_token)],
+        record_start: str | None = None,
+        record_end: str | None = None,
+        project: str | None = None,
+        since: str | None = None,
+        limit: int = Query(5000, ge=1, le=20000),
+        min_confidence: float = Query(0.35, ge=0.0, le=1.0),
+    ) -> dict[str, Any]:
+        """
+        对外友好输出：按「小时」一行话说明在做什么；自动丢弃空窗、低置信、
+        「可能」但置信不足等不可靠摘要。推荐与 record_start + record_end 同用。
+        """
+        trs = (record_start or "").strip() or None
+        tre = (record_end or "").strip() or None
+        since_q = (since or "").strip() or None
+        if (trs and not tre) or (tre and not trs):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="record_start and record_end must be provided together",
+            )
+        if not ((trs and tre) or since_q):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="请提供 record_start+record_end，或提供 since",
+            )
+        with db.connect() as conn:
+            rows = _fetch_received_rows(
+                conn,
+                limit=limit,
+                project=project,
+                since=since_q,
+                record_start=trs,
+                record_end=tre,
+            )
+        body = build_hourly_timeline(rows, min_confidence=min_confidence)
+        return {
+            "ok": True,
+            "schema": "hourly_one_line",
+            "description": "每小时最多一条可读说明；不可靠或空的时段已省略",
+            **body,
+        }
 
     @app.post("/api/v1/fetch")
     def fetch_external(

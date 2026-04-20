@@ -86,6 +86,16 @@ def _summaries_url() -> str:
     return u
 
 
+def _hourly_url() -> str:
+    """由 .../api/v1/summaries 推导 .../api/v1/timeline/hourly。"""
+    u = _sync_url()
+    if not u:
+        raise RuntimeError("未配置 ACTIVITY_CONTEXT_CLOUD_SYNC_URL")
+    if "/summaries" in u:
+        return u.replace("/summaries", "/timeline/hourly")
+    return u.rstrip("/") + "/timeline/hourly"
+
+
 def _fetches_url() -> str:
     """由 POST 地址 .../api/v1/summaries 推导 .../api/v1/fetches。"""
     u = _sync_url()
@@ -111,14 +121,41 @@ def _fetches_url() -> str:
 
 def pull_summaries(
     *,
-    limit: int = 50,
+    limit: int = 5000,
     project: str | None = None,
     since: str | None = None,
+    record_start: str | None = None,
+    record_end: str | None = None,
 ) -> dict[str, Any]:
-    url = _build_get_url(
-        _summaries_url(),
-        {"limit": limit, "project": project, "since": since},
-    )
+    q: dict[str, Any] = {
+        "limit": limit,
+        "project": project,
+        "since": since,
+        "record_start": record_start,
+        "record_end": record_end,
+    }
+    url = _build_get_url(_summaries_url(), q)
+    return _get_json(url)
+
+
+def pull_hourly_readable(
+    *,
+    limit: int = 5000,
+    project: str | None = None,
+    since: str | None = None,
+    record_start: str | None = None,
+    record_end: str | None = None,
+    min_confidence: float = 0.35,
+) -> dict[str, Any]:
+    q: dict[str, Any] = {
+        "limit": limit,
+        "project": project,
+        "since": since,
+        "record_start": record_start,
+        "record_end": record_end,
+        "min_confidence": min_confidence,
+    }
+    url = _build_get_url(_hourly_url(), q)
     return _get_json(url)
 
 
@@ -139,10 +176,41 @@ def main() -> None:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("summaries", help="GET /api/v1/summaries")
-    s.add_argument("--limit", type=int, default=50)
+    s.add_argument(
+        "--limit",
+        type=int,
+        default=5000,
+        help="安全上限（默认 5000）；按记录区间时应覆盖一整天的时间片数量",
+    )
     s.add_argument("--project", type=str, default="")
-    s.add_argument("--since", type=str, default="", help="只取 end_at >= 该 ISO 时间")
+    s.add_argument(
+        "--since",
+        type=str,
+        default="",
+        help="兼容旧参数：只取 end_at >= 该 ISO 时间（与 record-start/end 二选一）",
+    )
+    s.add_argument(
+        "--record-start",
+        type=str,
+        default="",
+        help="记录区间起点 ISO8601，与 --record-end 成对（按库内时间，不依赖「现在」）",
+    )
+    s.add_argument("--record-end", type=str, default="", help="记录区间终点 ISO8601")
     s.add_argument("--pretty", action="store_true")
+
+    h = sub.add_parser("hourly", help="GET /api/v1/timeline/hourly（按小时可读时间线）")
+    h.add_argument("--limit", type=int, default=5000)
+    h.add_argument("--project", type=str, default="")
+    h.add_argument("--since", type=str, default="")
+    h.add_argument("--record-start", type=str, default="")
+    h.add_argument("--record-end", type=str, default="")
+    h.add_argument(
+        "--min-confidence",
+        type=float,
+        default=0.35,
+        help="低于该置信度且无可用观察描述时不输出，默认 0.35",
+    )
+    h.add_argument("--pretty", action="store_true")
 
     f = sub.add_parser("fetches", help="GET /api/v1/fetches")
     f.add_argument("--limit", type=int, default=30)
@@ -150,11 +218,38 @@ def main() -> None:
 
     args = parser.parse_args()
     try:
-        if args.cmd == "summaries":
+        if args.cmd == "hourly":
+            rs = (args.record_start or "").strip()
+            re = (args.record_end or "").strip()
+            since = (args.since or "").strip()
+            if (rs or re) and since:
+                raise SystemExit("不要同时使用 --since 与 --record-start/--record-end")
+            if (rs and not re) or (re and not rs):
+                raise SystemExit("请同时提供 --record-start 与 --record-end，或改用 --since")
+            if not ((rs and re) or since):
+                raise SystemExit("请提供 record_start+record_end，或提供 since")
+            data = pull_hourly_readable(
+                limit=args.limit,
+                project=args.project or None,
+                since=since or None,
+                record_start=rs or None,
+                record_end=re or None,
+                min_confidence=args.min_confidence,
+            )
+        elif args.cmd == "summaries":
+            rs = (args.record_start or "").strip()
+            re = (args.record_end or "").strip()
+            since = (args.since or "").strip()
+            if (rs or re) and since:
+                raise SystemExit("不要同时使用 --since 与 --record-start/--record-end")
+            if (rs and not re) or (re and not rs):
+                raise SystemExit("请同时提供 --record-start 与 --record-end，或都不提供")
             data = pull_summaries(
                 limit=args.limit,
                 project=args.project or None,
-                since=args.since or None,
+                since=since or None,
+                record_start=rs or None,
+                record_end=re or None,
             )
         else:
             data = pull_fetches(limit=args.limit)

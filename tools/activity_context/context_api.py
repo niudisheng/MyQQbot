@@ -1,4 +1,4 @@
-"""给本地 AI 提供统一的上下文查询入口。"""
+﻿"""给本地 AI 提供统一的上下文查询入口。"""
 
 from __future__ import annotations
 
@@ -79,29 +79,85 @@ def get_current_focus(*, minutes: int = 15) -> dict[str, Any]:
     }
 
 
-def get_recent_activity(*, hours: int = 2, limit: int = 50) -> dict[str, Any]:
+def get_recent_activity(
+    *,
+    hours: int | None = 2,
+    limit: int = 50,
+    record_start: str | None = None,
+    record_end: str | None = None,
+) -> dict[str, Any]:
+    """
+    若同时提供 record_start、record_end（ISO8601，与库内字段同一套 UTC 语义），
+    则按记录时间区间筛选，不依赖当前时刻；否则沿用「从现在往前 hours 小时」。
+    limit 仅作安全上限；按时间范围查询时默认可较大。
+    """
     with storage.connect_db() as conn:
-        rows = storage.recent_summaries(conn, hours=hours, limit=limit)
+        if record_start and record_end:
+            rows = storage.summaries_in_record_range(
+                conn,
+                record_start=record_start.strip(),
+                record_end=record_end.strip(),
+                limit=limit,
+            )
+            mode = "record_range"
+        else:
+            h = hours if hours is not None else 2
+            rows = storage.recent_summaries(conn, hours=h, limit=limit)
+            mode = "rolling_hours"
     summaries = [storage.row_to_summary(row) for row in rows]
-    return {
+    out: dict[str, Any] = {
         "source": _SOURCE,
-        "hours": hours,
+        "filter_mode": mode,
         "health": get_data_health(),
         "summaries": summaries,
     }
+    if mode == "record_range":
+        out["record_start"] = record_start.strip() if record_start else None
+        out["record_end"] = record_end.strip() if record_end else None
+        out["count"] = len(summaries)
+    else:
+        out["hours"] = hours if hours is not None else 2
+        out["count"] = len(summaries)
+    return out
 
 
-def get_project_timeline(*, project: str, days: int = 1, limit: int = 50) -> dict[str, Any]:
+def get_project_timeline(
+    *,
+    project: str,
+    days: int | None = 1,
+    limit: int = 50,
+    record_start: str | None = None,
+    record_end: str | None = None,
+) -> dict[str, Any]:
     with storage.connect_db() as conn:
-        rows = storage.summaries_by_project(conn, project=project, days=days, limit=limit)
+        rows = storage.summaries_by_project(
+            conn,
+            project=project,
+            days=days,
+            record_start=record_start,
+            record_end=record_end,
+            limit=limit,
+        )
     summaries = [storage.row_to_summary(row) for row in rows]
-    return {
+    mode = (
+        "record_range"
+        if (record_start and record_end)
+        else "rolling_days"
+    )
+    out: dict[str, Any] = {
         "source": _SOURCE,
         "project": project,
-        "days": days,
+        "filter_mode": mode,
         "health": get_data_health(),
         "summaries": summaries,
+        "count": len(summaries),
     }
+    if mode == "record_range":
+        out["record_start"] = record_start.strip() if record_start else None
+        out["record_end"] = record_end.strip() if record_end else None
+    else:
+        out["days"] = days if days is not None else 1
+    return out
 
 
 def _json_response(handler: BaseHTTPRequestHandler, payload: dict[str, Any], status: int = 200) -> None:
@@ -128,9 +184,24 @@ class _ContextHandler(BaseHTTPRequestHandler):
                 _json_response(self, get_current_focus(minutes=minutes))
                 return
             if parsed.path == "/recent":
-                hours = int(query.get("hours", ["2"])[0])
-                limit = int(query.get("limit", ["50"])[0])
-                _json_response(self, get_recent_activity(hours=hours, limit=limit))
+                rs = query.get("record_start", [""])[0].strip()
+                re = query.get("record_end", [""])[0].strip()
+                limit = int(query.get("limit", ["5000" if (rs and re) else "50"])[0])
+                if rs and re:
+                    _json_response(
+                        self,
+                        get_recent_activity(
+                            record_start=rs,
+                            record_end=re,
+                            limit=limit,
+                        ),
+                    )
+                else:
+                    hours = int(query.get("hours", ["2"])[0])
+                    _json_response(
+                        self,
+                        get_recent_activity(hours=hours, limit=limit),
+                    )
                 return
             if parsed.path == "/project":
                 project = query.get("name", [""])[0].strip()
@@ -141,12 +212,25 @@ class _ContextHandler(BaseHTTPRequestHandler):
                         status=HTTPStatus.BAD_REQUEST,
                     )
                     return
-                days = int(query.get("days", ["1"])[0])
-                limit = int(query.get("limit", ["50"])[0])
-                _json_response(
-                    self,
-                    get_project_timeline(project=project, days=days, limit=limit),
-                )
+                rs = query.get("record_start", [""])[0].strip()
+                re = query.get("record_end", [""])[0].strip()
+                limit = int(query.get("limit", ["5000" if (rs and re) else "50"])[0])
+                if rs and re:
+                    _json_response(
+                        self,
+                        get_project_timeline(
+                            project=project,
+                            record_start=rs,
+                            record_end=re,
+                            limit=limit,
+                        ),
+                    )
+                else:
+                    days = int(query.get("days", ["1"])[0])
+                    _json_response(
+                        self,
+                        get_project_timeline(project=project, days=days, limit=limit),
+                    )
                 return
             _json_response(self, {"error": "not found"}, status=HTTPStatus.NOT_FOUND)
         except Exception as exc:
@@ -197,15 +281,39 @@ def main() -> None:
     focus_parser.add_argument("--minutes", type=int, default=_summary_minutes())
     focus_parser.add_argument("--pretty", action="store_true")
 
-    recent_parser = sub.add_parser("recent", help="查询最近摘要")
-    recent_parser.add_argument("--hours", type=int, default=2)
-    recent_parser.add_argument("--limit", type=int, default=50)
+    recent_parser = sub.add_parser("recent", help="查询摘要（按记录时间或按相对小时）")
+    recent_parser.add_argument(
+        "--hours",
+        type=int,
+        default=2,
+        help="与「当前时刻」无关时勿用；若同时指定 --record-start/end 则忽略此项",
+    )
+    recent_parser.add_argument(
+        "--record-start",
+        type=str,
+        default="",
+        help="记录区间起点 ISO8601（与库内 start_at/end_at 一致），与 --record-end 成对使用",
+    )
+    recent_parser.add_argument(
+        "--record-end",
+        type=str,
+        default="",
+        help="记录区间终点 ISO8601，与 --record-start 成对使用",
+    )
+    recent_parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="安全上限条数；按记录区间时默认 5000，否则默认 50（传 0 表示用默认）",
+    )
     recent_parser.add_argument("--pretty", action="store_true")
 
     project_parser = sub.add_parser("project", help="查询项目时间线")
     project_parser.add_argument("project", type=str)
     project_parser.add_argument("--days", type=int, default=1)
-    project_parser.add_argument("--limit", type=int, default=50)
+    project_parser.add_argument("--record-start", type=str, default="")
+    project_parser.add_argument("--record-end", type=str, default="")
+    project_parser.add_argument("--limit", type=int, default=0)
     project_parser.add_argument("--pretty", action="store_true")
 
     health_parser = sub.add_parser("health", help="查询采集健康状态")
@@ -220,16 +328,48 @@ def main() -> None:
         _print_json(get_current_focus(minutes=args.minutes), pretty=args.pretty)
         return
     if args.command == "recent":
-        _print_json(
-            get_recent_activity(hours=args.hours, limit=args.limit),
-            pretty=args.pretty,
-        )
+        rs = (args.record_start or "").strip()
+        re = (args.record_end or "").strip()
+        if rs and re:
+            lim = args.limit if args.limit > 0 else 5000
+            _print_json(
+                get_recent_activity(
+                    record_start=rs,
+                    record_end=re,
+                    limit=lim,
+                ),
+                pretty=args.pretty,
+            )
+        elif rs or re:
+            raise SystemExit("请同时提供 --record-start 与 --record-end，或两者都不提供")
+        else:
+            lim = args.limit if args.limit > 0 else 50
+            _print_json(
+                get_recent_activity(hours=args.hours, limit=lim),
+                pretty=args.pretty,
+            )
         return
     if args.command == "project":
-        _print_json(
-            get_project_timeline(project=args.project, days=args.days, limit=args.limit),
-            pretty=args.pretty,
-        )
+        rs = (args.record_start or "").strip()
+        re = (args.record_end or "").strip()
+        lim = args.limit if args.limit > 0 else (5000 if (rs and re) else 50)
+        if rs and re:
+            _print_json(
+                get_project_timeline(
+                    project=args.project,
+                    record_start=rs,
+                    record_end=re,
+                    limit=lim,
+                ),
+                pretty=args.pretty,
+            )
+        elif rs or re:
+            raise SystemExit("请同时提供 --record-start 与 --record-end，或两者都不提供")
+        else:
+            _print_json(
+                get_project_timeline(project=args.project, days=args.days, limit=lim),
+                pretty=args.pretty,
+            )
         return
     if args.command == "health":
         _print_json(get_data_health(), pretty=args.pretty)

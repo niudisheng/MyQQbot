@@ -70,6 +70,33 @@ python -m tools.activity_context.cloud_sync --pretty
 - Header: `Authorization: Bearer <token>`
 - 可选: `X-Client-Id: machine-a`（多设备时区分）
 
+### 查询已存摘要
+
+- `GET /api/v1/summaries`
+- Header: `Authorization: Bearer <token>`
+- 查询参数：
+  - **`record_start` + `record_end`**（推荐）：按摘要的 `start_at`/`end_at` 与区间**重叠**筛选，与服务器当前时间无关；`limit` 为安全上限（默认 5000，最大 20000）。
+  - `since`：兼容旧用法，`end_at >= since`。
+  - `project`：按项目名模糊匹配。
+  - 无区间时：按 `end_at` 倒序取最近若干条。
+
+### 对外可读时间线（推荐给别人看 / 给下游只读）
+
+- `GET /api/v1/timeline/hourly`
+- Header: `Authorization: Bearer <token>`
+- 查询参数：与 summaries 类似，**至少**提供 `record_start`+`record_end`，或提供 `since`；可选 `project`、`limit`、`min_confidence`（默认 0.35）。
+- 返回：**按小时**一条自然语言说明；自动**不返回**空窗、无观察数据、低置信、「可能…」但置信不足等不可靠片段。
+- 响应字段要点：
+  - `hours`：`[{ "hour": "2026-04-19 14:00", "text": "…" }, …]`
+  - `plain`：纯文本多行，可直接展示
+  - `reference_timezone`：若上传摘要里带过时区，会一并返回
+
+本地拉取示例：
+
+```bash
+python -m tools.activity_context.cloud_pull hourly --record-start "2026-04-19T00:00:00+00:00" --record-end "2026-04-19T23:59:59+00:00" --pretty
+```
+
 ### 对外拉取并落库
 
 - `POST /api/v1/fetch`

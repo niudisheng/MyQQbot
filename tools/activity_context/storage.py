@@ -529,15 +529,62 @@ def recent_summaries(
     return cursor.fetchall()
 
 
+def summaries_in_record_range(
+    conn: sqlite3.Connection,
+    *,
+    record_start: str,
+    record_end: str,
+    limit: int = 10_000,
+) -> list[sqlite3.Row]:
+    """
+    按「记录时间」筛选：与区间 [record_start, record_end]（含端点、存库 ISO 字符串比较）有重叠的摘要。
+    不依赖「当前时刻」，适合机器并非一直开机、只关心某段日历时间的场景。
+    """
+    cursor = conn.execute(
+        """
+        SELECT *
+        FROM activity_summary
+        WHERE end_at >= ?
+          AND start_at <= ?
+        ORDER BY start_at ASC
+        LIMIT ?
+        """,
+        (record_start, record_end, limit),
+    )
+    return cursor.fetchall()
+
+
 def summaries_by_project(
     conn: sqlite3.Connection,
     *,
     project: str,
-    days: int,
+    days: int | None = None,
+    record_start: str | None = None,
+    record_end: str | None = None,
     limit: int = 200,
 ) -> list[sqlite3.Row]:
-    threshold = to_iso(utc_now() - timedelta(days=days))
     keyword = f"%{project}%"
+    if record_start is not None and record_end is not None:
+        cursor = conn.execute(
+            """
+            SELECT *
+            FROM activity_summary
+            WHERE end_at >= ?
+              AND start_at <= ?
+              AND (
+                    project_hint LIKE ?
+                 OR inferred_task LIKE ?
+                 OR tags_json LIKE ?
+              )
+            ORDER BY start_at ASC
+            LIMIT ?
+            """,
+            (record_start, record_end, keyword, keyword, keyword, limit),
+        )
+        return cursor.fetchall()
+    if days is None:
+        days = 1
+    threshold = to_iso(utc_now() - timedelta(days=days))
     cursor = conn.execute(
         """
         SELECT *
