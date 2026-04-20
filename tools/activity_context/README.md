@@ -23,6 +23,13 @@
 
 若你在 VPS 上部署配套接收端，见 [`cloud_server/README.md`](cloud_server/README.md)：接收与 `cloud_sync.py` 相同的 JSON、本地 SQLite 落库，并提供受 Token 保护的对外 HTTP 拉取（`/api/v1/fetch`）用于拉第三方数据并保存。
 
+从云端**拉回**已存摘要（与上传共用 `ACTIVITY_CONTEXT_CLOUD_SYNC_URL` 与 `ACTIVITY_CONTEXT_CLOUD_SYNC_TOKEN`，对应 `GET /api/v1/summaries`）：
+
+```bash
+python -m tools.activity_context.cloud_pull summaries --pretty
+python -m tools.activity_context.cloud_pull fetches --pretty
+```
+
 ## 一键定时守护（长期开机推荐）
 
 默认**每 30 分钟**自动执行一轮：**采集 → 摘要 → 上传**。间隔可在 `.env` 中设置 `ACTIVITY_CONTEXT_DAEMON_INTERVAL_SECONDS`（秒），或用命令行 `--interval`。
